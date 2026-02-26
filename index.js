@@ -18,7 +18,7 @@ const NEOXR_KEY = process.env.NEOXR_KEY;
 const SESSION = "1727468410446638";
 
 // ==========================
-// SIMPLE CACHE
+// CACHE
 // ==========================
 const searchCache = new Map();
 
@@ -28,9 +28,69 @@ const searchCache = new Map();
 app.get("/", (req, res) => {
   res.json({
     engine: "AI Mood Smart Realtime",
-    moods: ["serius","santai","fun"],
+    debug: ["debug-chat","debug-image","debug-search"],
     status: "running"
   });
+});
+
+// ==========================
+// DEBUG CHAT RAW
+// ==========================
+app.get("/debug-chat", async (req, res) => {
+  try {
+    const response = await fetch(
+      `https://api.neoxr.eu/api/gpt4-session?q=test&session=${SESSION}&apikey=${NEOXR_KEY}`
+    );
+
+    const raw = await response.text();
+    console.log("=== DEBUG CHAT RAW ===");
+    console.log(raw);
+
+    res.json({ raw_response: raw });
+
+  } catch (err) {
+    res.json({ error: err.message });
+  }
+});
+
+// ==========================
+// DEBUG IMAGE RAW
+// ==========================
+app.get("/debug-image", async (req, res) => {
+  try {
+    const response = await fetch(
+      `https://api.neoxr.eu/api/bardimg?q=test&apikey=${NEOXR_KEY}`
+    );
+
+    const raw = await response.text();
+    console.log("=== DEBUG IMAGE RAW ===");
+    console.log(raw);
+
+    res.json({ raw_response: raw });
+
+  } catch (err) {
+    res.json({ error: err.message });
+  }
+});
+
+// ==========================
+// DEBUG SEARCH RAW
+// ==========================
+app.get("/debug-search", async (req, res) => {
+  try {
+    const response = await fetch(
+      `https://api.neoxr.eu/api/google?q=test&apikey=${NEOXR_KEY}`
+    );
+
+    const raw = await response.text();
+    console.log("=== DEBUG SEARCH RAW ===");
+    console.log(raw);
+
+    res.json({ raw_response: raw });
+
+  } catch (err) {
+    res.json({ error: err.message });
+  }
 });
 
 // ==========================
@@ -69,15 +129,14 @@ function detectMood(text){
 
   if (
     lower.includes("hukum") ||
-    lower.includes("undang") ||
-    lower.includes("penjelasan ilmiah") ||
     lower.includes("analisis") ||
+    lower.includes("ilmiah") ||
     lower.includes("skripsi")
   ) return "serius";
 
   if (
-    lower.includes("jokes") ||
     lower.includes("lucu") ||
+    lower.includes("jokes") ||
     lower.includes("gombal") ||
     lower.includes("ngakak")
   ) return "fun";
@@ -89,41 +148,41 @@ function detectMood(text){
 // MOOD PROMPT
 // ==========================
 function buildSystemPrompt(mood){
+
   if(mood === "serius"){
     return `
 Kamu adalah AI profesional dan serius.
-Jawabanmu formal, jelas, dan informatif.
-Gunakan bahasa yang rapi dan sistematis.
-Jika ada hasil pencarian internet, gunakan itu.
-Jangan pernah mengatakan bahwa kamu tidak bisa mengakses internet.
+Jawaban formal, jelas, dan sistematis.
+Gunakan informasi pencarian jika ada.
+Jangan bilang kamu tidak bisa akses internet.
 `;
   }
 
   if(mood === "fun"){
     return `
 Kamu adalah AI santai dan fun.
-Boleh bercanda ringan dan pakai gaya ngobrol.
-Tetap informatif dan tidak berlebihan.
-Gunakan hasil pencarian jika ada.
-Jangan pernah mengatakan bahwa kamu tidak bisa mengakses internet.
+Boleh bercanda ringan dan gaya ngobrol.
+Tetap informatif.
+Gunakan informasi pencarian jika ada.
+Jangan bilang kamu tidak bisa akses internet.
 `;
   }
 
   return `
 Kamu adalah AI pintar dan santai.
 Jawaban natural seperti teman ngobrol.
-Boleh sedikit humor ringan kalau cocok.
-Gunakan hasil pencarian jika ada.
-Jangan pernah mengatakan bahwa kamu tidak bisa mengakses internet.
+Boleh sedikit humor ringan jika cocok.
+Gunakan informasi pencarian jika ada.
+Jangan bilang kamu tidak bisa akses internet.
 `;
 }
 
 // ==========================
-// CHAT API WITH MOOD
+// CHAT API
 // ==========================
 app.post("/api/chat", async (req, res) => {
-  const message = req.body.message;
 
+  const message = req.body.message;
   if (!message) {
     return res.json({ status:false, msg:"Message kosong" });
   }
@@ -133,7 +192,7 @@ app.post("/api/chat", async (req, res) => {
     const mood = detectMood(message);
     const systemPrompt = buildSystemPrompt(mood);
 
-    // ===== FIRST RESPONSE =====
+    // FIRST CALL
     const firstResponse = await fetch(
       `https://api.neoxr.eu/api/gpt4-session?q=${encodeURIComponent(systemPrompt + "\nUser: " + message)}&session=${SESSION}&apikey=${NEOXR_KEY}`
     );
@@ -151,11 +210,9 @@ app.post("/api/chat", async (req, res) => {
 
     const needSearch =
       lowerQuestion.includes("sekarang") ||
-      lowerQuestion.includes("2026") ||
       lowerQuestion.includes("hari ini") ||
+      lowerQuestion.includes("2026") ||
       lowerQuestion.includes("terbaru") ||
-      lowerReply.includes("tidak dapat") ||
-      lowerReply.includes("tidak bisa") ||
       lowerReply.includes("tidak memiliki informasi terbaru");
 
     if (!needSearch) {
@@ -167,10 +224,10 @@ app.post("/api/chat", async (req, res) => {
       });
     }
 
-    // ===== SEARCH =====
+    // SEARCH
     const searchResults = await searchOnline(message);
 
-    if (!searchResults || searchResults.length === 0) {
+    if (!searchResults) {
       return res.json({
         status:true,
         mood,
@@ -206,9 +263,7 @@ ${message}
       finalData?.msg ||
       reply;
 
-    // HARD FILTER
     finalReply = finalReply.replace(/tidak bisa mengakses internet/gi, "");
-    finalReply = finalReply.replace(/tidak dapat melakukan pencarian langsung di internet/gi, "");
 
     res.json({
       status:true,
@@ -228,8 +283,8 @@ ${message}
 // IMAGE API
 // ==========================
 app.post("/api/image", async (req, res) => {
-  const prompt = req.body.prompt;
 
+  const prompt = req.body.prompt;
   if (!prompt) {
     return res.json({ status:false, msg:"Prompt kosong" });
   }
