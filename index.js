@@ -28,6 +28,76 @@ app.get("/", (req, res) => {
 });
 
 // ==========================
+// CHECK IPV4
+// ==========================
+app.get("/checkip", async (req, res) => {
+  try {
+    const response = await fetch("https://api.ipify.org?format=json");
+    const data = await response.json();
+    res.json({ ipv4: data.ip });
+  } catch (err) {
+    res.json({ error: "Gagal cek IPv4" });
+  }
+});
+
+// ==========================
+// CHECK IPV6 (PENTING)
+// ==========================
+app.get("/checkip6", async (req, res) => {
+  try {
+    const response = await fetch("https://api64.ipify.org?format=json");
+    const data = await response.json();
+    res.json({ ipv6: data.ip });
+  } catch (err) {
+    res.json({ error: "Gagal cek IPv6" });
+  }
+});
+
+// ==========================
+// DEBUG NEOXR CHAT
+// ==========================
+app.get("/debug-chat", async (req, res) => {
+  try {
+    const response = await fetch(
+      `https://api.neoxr.eu/api/gpt4-session?q=test&session=${SESSION}&apikey=${NEOXR_KEY}`
+    );
+
+    const raw = await response.text();
+
+    console.log("=== DEBUG CHAT RAW ===");
+    console.log(raw);
+    console.log("======================");
+
+    res.json({ raw_response: raw });
+
+  } catch (err) {
+    res.json({ error: err.message });
+  }
+});
+
+// ==========================
+// DEBUG NEOXR IMAGE
+// ==========================
+app.get("/debug-image", async (req, res) => {
+  try {
+    const response = await fetch(
+      `https://api.neoxr.eu/api/bardimg?q=test&apikey=${NEOXR_KEY}`
+    );
+
+    const raw = await response.text();
+
+    console.log("=== DEBUG IMAGE RAW ===");
+    console.log(raw);
+    console.log("======================");
+
+    res.json({ raw_response: raw });
+
+  } catch (err) {
+    res.json({ error: err.message });
+  }
+});
+
+// ==========================
 // CHAT API
 // ==========================
 app.post("/api/chat", async (req, res) => {
@@ -41,11 +111,15 @@ app.post("/api/chat", async (req, res) => {
   }
 
   try {
+
+    console.log("User:", message);
+
     const response = await fetch(
       `https://api.neoxr.eu/api/gpt4-session?q=${encodeURIComponent(message)}&session=${SESSION}&apikey=${NEOXR_KEY}`
     );
 
     const data = await response.json();
+    console.log("NeoXR Chat Response:", data);
 
     if (!data.status) {
       return res.json(data);
@@ -85,11 +159,15 @@ app.post("/api/image", async (req, res) => {
   }
 
   try {
+
+    console.log("Image Prompt:", prompt);
+
     const response = await fetch(
       `https://api.neoxr.eu/api/bardimg?q=${encodeURIComponent(prompt)}&apikey=${NEOXR_KEY}`
     );
 
     const data = await response.json();
+    console.log("NeoXR Image Response:", data);
 
     if (!data.status) {
       return res.json(data);
