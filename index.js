@@ -18,7 +18,7 @@ const NEOXR_KEY = process.env.NEOXR_KEY;
 const SESSION = "1727468410446638";
 
 // ==========================
-// SIMPLE MEMORY CACHE
+// SIMPLE CACHE
 // ==========================
 const searchCache = new Map();
 
@@ -27,66 +27,10 @@ const searchCache = new Map();
 // ==========================
 app.get("/", (req, res) => {
   res.json({
-    engine: "AI Hybrid Smart",
-    features: ["chat","image","auto-search","cache"],
+    engine: "AI Mood Smart Realtime",
+    moods: ["serius","santai","fun"],
     status: "running"
   });
-});
-
-// ==========================
-// CHECK IPV4
-// ==========================
-app.get("/checkip", async (req, res) => {
-  try {
-    const response = await fetch("https://api.ipify.org?format=json");
-    const data = await response.json();
-    res.json({ ipv4: data.ip });
-  } catch (err) {
-    res.json({ error: "Gagal cek IPv4" });
-  }
-});
-
-// ==========================
-// CHECK IPV6
-// ==========================
-app.get("/checkip6", async (req, res) => {
-  try {
-    const response = await fetch("https://api64.ipify.org?format=json");
-    const data = await response.json();
-    res.json({ ipv6: data.ip });
-  } catch (err) {
-    res.json({ error: "Gagal cek IPv6" });
-  }
-});
-
-// ==========================
-// DEBUG CHAT
-// ==========================
-app.get("/debug-chat", async (req, res) => {
-  try {
-    const response = await fetch(
-      `https://api.neoxr.eu/api/gpt4-session?q=test&session=${SESSION}&apikey=${NEOXR_KEY}`
-    );
-    const raw = await response.text();
-    res.json({ raw_response: raw });
-  } catch (err) {
-    res.json({ error: err.message });
-  }
-});
-
-// ==========================
-// DEBUG IMAGE
-// ==========================
-app.get("/debug-image", async (req, res) => {
-  try {
-    const response = await fetch(
-      `https://api.neoxr.eu/api/bardimg?q=test&apikey=${NEOXR_KEY}`
-    );
-    const raw = await response.text();
-    res.json({ raw_response: raw });
-  } catch (err) {
-    res.json({ error: err.message });
-  }
 });
 
 // ==========================
@@ -103,24 +47,79 @@ async function searchOnline(query) {
   );
 
   const data = await response.json();
-
   if (!data.status) return null;
 
-  const results = data.data?.slice(0, 3) || [];
+  const results = data.data?.slice(0,3) || [];
 
-  const formatted = results.map((r, i) => ({
+  const formatted = results.map(r => ({
     title: r.title,
     snippet: r.snippet,
     link: r.link
   }));
 
   searchCache.set(query, formatted);
-
   return formatted;
 }
 
 // ==========================
-// AUTO SMART CHAT API
+// MOOD DETECTOR
+// ==========================
+function detectMood(text){
+  const lower = text.toLowerCase();
+
+  if (
+    lower.includes("hukum") ||
+    lower.includes("undang") ||
+    lower.includes("penjelasan ilmiah") ||
+    lower.includes("analisis") ||
+    lower.includes("skripsi")
+  ) return "serius";
+
+  if (
+    lower.includes("jokes") ||
+    lower.includes("lucu") ||
+    lower.includes("gombal") ||
+    lower.includes("ngakak")
+  ) return "fun";
+
+  return "santai";
+}
+
+// ==========================
+// MOOD PROMPT
+// ==========================
+function buildSystemPrompt(mood){
+  if(mood === "serius"){
+    return `
+Kamu adalah AI profesional dan serius.
+Jawabanmu formal, jelas, dan informatif.
+Gunakan bahasa yang rapi dan sistematis.
+Jika ada hasil pencarian internet, gunakan itu.
+Jangan pernah mengatakan bahwa kamu tidak bisa mengakses internet.
+`;
+  }
+
+  if(mood === "fun"){
+    return `
+Kamu adalah AI santai dan fun.
+Boleh bercanda ringan dan pakai gaya ngobrol.
+Tetap informatif dan tidak berlebihan.
+Gunakan hasil pencarian jika ada.
+Jangan pernah mengatakan bahwa kamu tidak bisa mengakses internet.
+`;
+  }
+
+  return `
+Kamu adalah AI pintar dan santai.
+Jawaban natural seperti teman ngobrol.
+Boleh sedikit humor ringan kalau cocok.
+Gunakan hasil pencarian jika ada.
+Jangan pernah mengatakan bahwa kamu tidak bisa mengakses internet.
+`;
+}
+
+// ==========================
+// CHAT API WITH MOOD
 // ==========================
 app.post("/api/chat", async (req, res) => {
   const message = req.body.message;
@@ -131,9 +130,12 @@ app.post("/api/chat", async (req, res) => {
 
   try {
 
-    // 1️⃣ Jawaban normal dulu
+    const mood = detectMood(message);
+    const systemPrompt = buildSystemPrompt(mood);
+
+    // ===== FIRST RESPONSE =====
     const firstResponse = await fetch(
-      `https://api.neoxr.eu/api/gpt4-session?q=${encodeURIComponent(message)}&session=${SESSION}&apikey=${NEOXR_KEY}`
+      `https://api.neoxr.eu/api/gpt4-session?q=${encodeURIComponent(systemPrompt + "\nUser: " + message)}&session=${SESSION}&apikey=${NEOXR_KEY}`
     );
 
     const firstData = await firstResponse.json();
@@ -147,32 +149,33 @@ app.post("/api/chat", async (req, res) => {
     const lowerReply = reply.toLowerCase();
     const lowerQuestion = message.toLowerCase();
 
-    // 2️⃣ Deteksi butuh search
     const needSearch =
       lowerQuestion.includes("sekarang") ||
+      lowerQuestion.includes("2026") ||
       lowerQuestion.includes("hari ini") ||
       lowerQuestion.includes("terbaru") ||
-      lowerQuestion.includes("update") ||
-      lowerQuestion.includes("berapa harga") ||
-      lowerReply.includes("tidak tahu") ||
+      lowerReply.includes("tidak dapat") ||
+      lowerReply.includes("tidak bisa") ||
       lowerReply.includes("tidak memiliki informasi terbaru");
 
     if (!needSearch) {
       return res.json({
         status:true,
-        result: reply,
-        search_used:false
+        mood,
+        search_used:false,
+        result: reply
       });
     }
 
-    // 3️⃣ Search online
+    // ===== SEARCH =====
     const searchResults = await searchOnline(message);
 
     if (!searchResults || searchResults.length === 0) {
       return res.json({
         status:true,
-        result: reply,
-        search_used:false
+        mood,
+        search_used:false,
+        result: reply
       });
     }
 
@@ -180,14 +183,14 @@ app.post("/api/chat", async (req, res) => {
       .map(r => `${r.title}\n${r.snippet}`)
       .join("\n\n");
 
-    // 4️⃣ Kirim ulang ke AI dengan data terbaru
     const finalPrompt = `
-Berikut hasil pencarian terbaru dari internet:
+${systemPrompt}
+
+Gunakan informasi berikut untuk menjawab:
 
 ${snippets}
 
-Gunakan informasi di atas untuk menjawab pertanyaan berikut secara akurat dan jelas:
-
+Pertanyaan:
 ${message}
 `;
 
@@ -197,21 +200,26 @@ ${message}
 
     const finalData = await finalResponse.json();
 
-    const finalReply =
+    let finalReply =
       finalData?.data?.message ||
       finalData?.result ||
       finalData?.msg ||
       reply;
 
+    // HARD FILTER
+    finalReply = finalReply.replace(/tidak bisa mengakses internet/gi, "");
+    finalReply = finalReply.replace(/tidak dapat melakukan pencarian langsung di internet/gi, "");
+
     res.json({
       status:true,
-      result: finalReply,
+      mood,
       search_used:true,
-      sources: searchResults
+      sources: searchResults,
+      result: finalReply
     });
 
   } catch (err) {
-    console.error("Chat Error:", err);
+    console.error(err);
     res.json({ status:false, msg:"Server error" });
   }
 });
@@ -245,7 +253,6 @@ app.post("/api/image", async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Image Error:", err);
     res.json({ status:false, msg:"Gagal generate image" });
   }
 });
@@ -256,5 +263,5 @@ app.post("/api/image", async (req, res) => {
 const PORT = process.env.PORT || 8000;
 
 app.listen(PORT, () => {
-  console.log(`🔥 AI Hybrid Smart running on port ${PORT}`);
+  console.log(`🔥 AI Mood Smart running on port ${PORT}`);
 });
