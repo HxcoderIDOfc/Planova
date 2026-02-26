@@ -21,7 +21,7 @@ const AI_NAME = "Planova AI";
 const DEVELOPER = "Planova";
 
 // ==========================
-// ROOT ROUTE
+// ROOT
 // ==========================
 app.get("/", (req, res) => {
   res.json({
@@ -31,38 +31,52 @@ app.get("/", (req, res) => {
 });
 
 // ==========================
-// CHECK IP (Simple)
+// CHECK IP
 // ==========================
 app.get("/checkip", async (req, res) => {
   try {
     const response = await fetch("https://api.ipify.org?format=json");
     const data = await response.json();
-
-    res.json({
-      server_ip: data.ip,
-      message: "Masukkan IP ini ke whitelist NeoXR"
-    });
-
+    res.json({ server_ip: data.ip });
   } catch (err) {
-    res.json({ error: "Gagal cek IP server" });
+    res.json({ error: "Gagal cek IP" });
   }
 });
 
 // ==========================
-// REAL IP DEBUG (PENTING)
+// REAL IP
 // ==========================
 app.get("/realip", async (req, res) => {
   try {
     const response = await fetch("https://api.ipify.org?format=json");
     const data = await response.json();
+    res.json({ outbound_ip: data.ip });
+  } catch (err) {
+    res.json({ error: "Gagal cek outbound IP" });
+  }
+});
+
+// ==========================
+// DEBUG NEOXR (PENTING)
+// ==========================
+app.get("/debug-neoxr", async (req, res) => {
+  try {
+    const response = await fetch(
+      `https://api.neoxr.eu/api/gpt4-session?q=test&session=${SESSION}&apikey=${NEOXR_KEY}`
+    );
+
+    const text = await response.text();
+
+    console.log("=== RAW NeoXR Response ===");
+    console.log(text);
+    console.log("==========================");
 
     res.json({
-      outbound_ip: data.ip,
-      note: "IP ini yang digunakan server saat keluar request"
+      raw_response: text
     });
 
   } catch (err) {
-    res.json({ error: "Gagal cek outbound IP" });
+    res.json({ error: err.message });
   }
 });
 
@@ -84,21 +98,11 @@ function normalize(text) {
 function identityCheck(text) {
   const clean = normalize(text);
 
-  if (
-    clean.includes("siapa kamu") ||
-    clean.includes("kamu siapa") ||
-    clean.includes("nama kamu") ||
-    clean.includes("chatgpt") ||
-    clean.includes("openai")
-  ) {
+  if (/siapa kamu|kamu siapa|nama kamu/.test(clean)) {
     return `Saya adalah ${AI_NAME}.`;
   }
 
-  if (
-    clean.includes("developer") ||
-    clean.includes("pembuat") ||
-    clean.includes("siapa yang membuat")
-  ) {
+  if (/developer kamu|siapa developer kamu|siapa pembuat kamu/.test(clean)) {
     return `Developer saya adalah ${DEVELOPER}.`;
   }
 
@@ -106,16 +110,13 @@ function identityCheck(text) {
 }
 
 // ==========================
-// API ENDPOINT
+// API
 // ==========================
 app.post("/api", async (req, res) => {
   const message = req.body.message;
 
   if (!message) {
-    return res.json({
-      status: false,
-      msg: "Message kosong"
-    });
+    return res.json({ status: false, msg: "Message kosong" });
   }
 
   const identity = identityCheck(message);
@@ -131,25 +132,45 @@ app.post("/api", async (req, res) => {
 Kamu adalah ${AI_NAME}.
 Jangan pernah menyebut ChatGPT atau OpenAI.
 Jika ditanya identitas, jawab bahwa kamu adalah ${AI_NAME}.
-Jawab profesional dan ringkas.
 `;
 
   try {
+
+    // Log outbound IP sebelum call NeoXR
+    const ipRes = await fetch("https://api.ipify.org?format=json");
+    const ipData = await ipRes.json();
+    console.log("Outbound IP before NeoXR call:", ipData.ip);
+
     const response = await fetch(
       `https://api.neoxr.eu/api/gpt4-session?q=${encodeURIComponent(
         systemPrompt + "\nUser: " + message
       )}&session=${SESSION}&apikey=${NEOXR_KEY}`
     );
 
-    const data = await response.json();
+    const rawText = await response.text();
+
+    console.log("=== NeoXR Response ===");
+    console.log(rawText);
+    console.log("======================");
+
+    let data;
+    try {
+      data = JSON.parse(rawText);
+    } catch {
+      return res.json({
+        status: false,
+        msg: "NeoXR response bukan JSON",
+        raw: rawText
+      });
+    }
 
     let reply =
       data?.data?.message ||
       data?.result ||
       data?.msg ||
-      "Tidak ada jawaban.";
+      rawText;
 
-    reply = reply.replace(/ChatGPT|OpenAI/gi, AI_NAME);
+    reply = reply.replace(/chatgpt|openai|gpt-?\d*/gi, AI_NAME);
 
     res.json({
       status: true,
@@ -158,15 +179,13 @@ Jawab profesional dan ringkas.
     });
 
   } catch (err) {
-    res.json({
-      status: false,
-      msg: "Server error"
-    });
+    console.error("ERROR:", err);
+    res.json({ status: false, msg: "Server error" });
   }
 });
 
 // ==========================
-// PORT (Koyeb)
+// PORT
 // ==========================
 const PORT = process.env.PORT || 8000;
 
