@@ -18,11 +18,17 @@ const NEOXR_KEY = process.env.NEOXR_KEY;
 const SESSION = "1727468410446638";
 
 // ==========================
+// SIMPLE MEMORY CACHE
+// ==========================
+const searchCache = new Map();
+
+// ==========================
 // ROOT
 // ==========================
 app.get("/", (req, res) => {
   res.json({
-    engine: "AI Service",
+    engine: "AI Hybrid Smart",
+    features: ["chat","image","auto-search","cache"],
     status: "running"
   });
 });
@@ -41,7 +47,7 @@ app.get("/checkip", async (req, res) => {
 });
 
 // ==========================
-// CHECK IPV6 (PENTING)
+// CHECK IPV6
 // ==========================
 app.get("/checkip6", async (req, res) => {
   try {
@@ -54,94 +60,159 @@ app.get("/checkip6", async (req, res) => {
 });
 
 // ==========================
-// DEBUG NEOXR CHAT
+// DEBUG CHAT
 // ==========================
 app.get("/debug-chat", async (req, res) => {
   try {
     const response = await fetch(
       `https://api.neoxr.eu/api/gpt4-session?q=test&session=${SESSION}&apikey=${NEOXR_KEY}`
     );
-
     const raw = await response.text();
-
-    console.log("=== DEBUG CHAT RAW ===");
-    console.log(raw);
-    console.log("======================");
-
     res.json({ raw_response: raw });
-
   } catch (err) {
     res.json({ error: err.message });
   }
 });
 
 // ==========================
-// DEBUG NEOXR IMAGE
+// DEBUG IMAGE
 // ==========================
 app.get("/debug-image", async (req, res) => {
   try {
     const response = await fetch(
       `https://api.neoxr.eu/api/bardimg?q=test&apikey=${NEOXR_KEY}`
     );
-
     const raw = await response.text();
-
-    console.log("=== DEBUG IMAGE RAW ===");
-    console.log(raw);
-    console.log("======================");
-
     res.json({ raw_response: raw });
-
   } catch (err) {
     res.json({ error: err.message });
   }
 });
 
 // ==========================
-// CHAT API
+// SEARCH FUNCTION
+// ==========================
+async function searchOnline(query) {
+
+  if (searchCache.has(query)) {
+    return searchCache.get(query);
+  }
+
+  const response = await fetch(
+    `https://api.neoxr.eu/api/google?q=${encodeURIComponent(query)}&apikey=${NEOXR_KEY}`
+  );
+
+  const data = await response.json();
+
+  if (!data.status) return null;
+
+  const results = data.data?.slice(0, 3) || [];
+
+  const formatted = results.map((r, i) => ({
+    title: r.title,
+    snippet: r.snippet,
+    link: r.link
+  }));
+
+  searchCache.set(query, formatted);
+
+  return formatted;
+}
+
+// ==========================
+// AUTO SMART CHAT API
 // ==========================
 app.post("/api/chat", async (req, res) => {
   const message = req.body.message;
 
   if (!message) {
-    return res.json({
-      status: false,
-      msg: "Message kosong"
-    });
+    return res.json({ status:false, msg:"Message kosong" });
   }
 
   try {
 
-    console.log("User:", message);
-
-    const response = await fetch(
+    // 1️⃣ Jawaban normal dulu
+    const firstResponse = await fetch(
       `https://api.neoxr.eu/api/gpt4-session?q=${encodeURIComponent(message)}&session=${SESSION}&apikey=${NEOXR_KEY}`
     );
 
-    const data = await response.json();
-    console.log("NeoXR Chat Response:", data);
+    const firstData = await firstResponse.json();
 
-    if (!data.status) {
-      return res.json(data);
+    let reply =
+      firstData?.data?.message ||
+      firstData?.result ||
+      firstData?.msg ||
+      "";
+
+    const lowerReply = reply.toLowerCase();
+    const lowerQuestion = message.toLowerCase();
+
+    // 2️⃣ Deteksi butuh search
+    const needSearch =
+      lowerQuestion.includes("sekarang") ||
+      lowerQuestion.includes("hari ini") ||
+      lowerQuestion.includes("terbaru") ||
+      lowerQuestion.includes("update") ||
+      lowerQuestion.includes("berapa harga") ||
+      lowerReply.includes("tidak tahu") ||
+      lowerReply.includes("tidak memiliki informasi terbaru");
+
+    if (!needSearch) {
+      return res.json({
+        status:true,
+        result: reply,
+        search_used:false
+      });
     }
 
-    const reply =
-      data?.data?.message ||
-      data?.result ||
-      data?.msg ||
-      "Tidak ada jawaban.";
+    // 3️⃣ Search online
+    const searchResults = await searchOnline(message);
+
+    if (!searchResults || searchResults.length === 0) {
+      return res.json({
+        status:true,
+        result: reply,
+        search_used:false
+      });
+    }
+
+    const snippets = searchResults
+      .map(r => `${r.title}\n${r.snippet}`)
+      .join("\n\n");
+
+    // 4️⃣ Kirim ulang ke AI dengan data terbaru
+    const finalPrompt = `
+Berikut hasil pencarian terbaru dari internet:
+
+${snippets}
+
+Gunakan informasi di atas untuk menjawab pertanyaan berikut secara akurat dan jelas:
+
+${message}
+`;
+
+    const finalResponse = await fetch(
+      `https://api.neoxr.eu/api/gpt4-session?q=${encodeURIComponent(finalPrompt)}&session=${SESSION}&apikey=${NEOXR_KEY}`
+    );
+
+    const finalData = await finalResponse.json();
+
+    const finalReply =
+      finalData?.data?.message ||
+      finalData?.result ||
+      finalData?.msg ||
+      reply;
 
     res.json({
-      status: true,
-      result: reply
+      status:true,
+      result: finalReply,
+      search_used:true,
+      sources: searchResults
     });
 
   } catch (err) {
     console.error("Chat Error:", err);
-    res.json({
-      status: false,
-      msg: "Server error"
-    });
+    res.json({ status:false, msg:"Server error" });
   }
 });
 
@@ -152,26 +223,15 @@ app.post("/api/image", async (req, res) => {
   const prompt = req.body.prompt;
 
   if (!prompt) {
-    return res.json({
-      status: false,
-      msg: "Prompt kosong"
-    });
+    return res.json({ status:false, msg:"Prompt kosong" });
   }
 
   try {
-
-    console.log("Image Prompt:", prompt);
-
     const response = await fetch(
       `https://api.neoxr.eu/api/bardimg?q=${encodeURIComponent(prompt)}&apikey=${NEOXR_KEY}`
     );
 
     const data = await response.json();
-    console.log("NeoXR Image Response:", data);
-
-    if (!data.status) {
-      return res.json(data);
-    }
 
     const imageUrl =
       data?.data ||
@@ -180,16 +240,13 @@ app.post("/api/image", async (req, res) => {
       null;
 
     res.json({
-      status: true,
-      image: imageUrl
+      status:true,
+      image:imageUrl
     });
 
   } catch (err) {
     console.error("Image Error:", err);
-    res.json({
-      status: false,
-      msg: "Gagal generate image"
-    });
+    res.json({ status:false, msg:"Gagal generate image" });
   }
 });
 
@@ -199,5 +256,5 @@ app.post("/api/image", async (req, res) => {
 const PORT = process.env.PORT || 8000;
 
 app.listen(PORT, () => {
-  console.log(`🔥 AI Service running on port ${PORT}`);
+  console.log(`🔥 AI Hybrid Smart running on port ${PORT}`);
 });
