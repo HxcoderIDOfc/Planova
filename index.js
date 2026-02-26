@@ -28,55 +28,7 @@ app.get("/", (req, res) => {
 });
 
 // ==========================
-// CHECK IP
-// ==========================
-app.get("/checkip", async (req, res) => {
-  try {
-    const response = await fetch("https://api64.ipify.org?format=json");
-    const data = await response.json();
-    res.json({ server_ip: data.ip });
-  } catch (err) {
-    res.json({ error: "Gagal cek IP" });
-  }
-});
-
-// ==========================
-// REAL IP
-// ==========================
-app.get("/realip", async (req, res) => {
-  try {
-    const response = await fetch("https://api64.ipify.org?format=json");
-    const data = await response.json();
-    res.json({ outbound_ip: data.ip });
-  } catch (err) {
-    res.json({ error: "Gagal cek outbound IP" });
-  }
-});
-
-// ==========================
-// DEBUG NEOXR
-// ==========================
-app.get("/debug-neoxr", async (req, res) => {
-  try {
-    const response = await fetch(
-      `https://api.neoxr.eu/api/copilot?q=test&apikey=${NEOXR_KEY}`
-    );
-
-    const text = await response.text();
-
-    console.log("=== RAW NeoXR Response ===");
-    console.log(text);
-    console.log("==========================");
-
-    res.json({ raw_response: text });
-
-  } catch (err) {
-    res.json({ error: err.message });
-  }
-});
-
-// ==========================
-// CHAT - COPILOT
+// CHAT API
 // ==========================
 app.post("/api/chat", async (req, res) => {
   const message = req.body.message;
@@ -90,7 +42,7 @@ app.post("/api/chat", async (req, res) => {
 
   try {
     const response = await fetch(
-      `https://api.neoxr.eu/api/copilot?q=${encodeURIComponent(message)}&apikey=${NEOXR_KEY}`
+      `https://api.neoxr.eu/api/gpt4-session?q=${encodeURIComponent(message)}&session=${SESSION}&apikey=${NEOXR_KEY}`
     );
 
     const data = await response.json();
@@ -100,7 +52,7 @@ app.post("/api/chat", async (req, res) => {
     }
 
     const reply =
-      data?.data ||
+      data?.data?.message ||
       data?.result ||
       data?.msg ||
       "Tidak ada jawaban.";
@@ -120,7 +72,7 @@ app.post("/api/chat", async (req, res) => {
 });
 
 // ==========================
-// IMAGE GENERATOR
+// IMAGE API
 // ==========================
 app.post("/api/image", async (req, res) => {
   const prompt = req.body.prompt;
