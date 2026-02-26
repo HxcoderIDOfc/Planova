@@ -4,7 +4,7 @@ const app = express();
 app.use(express.json());
 
 // ==========================
-// CORS (BIAR BISA WEB)
+// CORS
 // ==========================
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -31,7 +31,7 @@ app.get("/", (req, res) => {
 });
 
 // ==========================
-// CHECK IP ROUTE (Whitelist)
+// CHECK IP (Simple)
 // ==========================
 app.get("/checkip", async (req, res) => {
   try {
@@ -49,7 +49,25 @@ app.get("/checkip", async (req, res) => {
 });
 
 // ==========================
-// NORMALIZE TEXT
+// REAL IP DEBUG (PENTING)
+// ==========================
+app.get("/realip", async (req, res) => {
+  try {
+    const response = await fetch("https://api.ipify.org?format=json");
+    const data = await response.json();
+
+    res.json({
+      outbound_ip: data.ip,
+      note: "IP ini yang digunakan server saat keluar request"
+    });
+
+  } catch (err) {
+    res.json({ error: "Gagal cek outbound IP" });
+  }
+});
+
+// ==========================
+// NORMALIZE
 // ==========================
 function normalize(text) {
   let clean = text.toLowerCase();
@@ -57,7 +75,6 @@ function normalize(text) {
   clean = clean
     .replace(/opnai|opena i|open ai/g, "openai")
     .replace(/chat gpt|chagpt/g, "chatgpt");
-
   return clean;
 }
 
@@ -101,7 +118,6 @@ app.post("/api", async (req, res) => {
     });
   }
 
-  // Identity Lock
   const identity = identityCheck(message);
   if (identity) {
     return res.json({
@@ -133,7 +149,6 @@ Jawab profesional dan ringkas.
       data?.msg ||
       "Tidak ada jawaban.";
 
-    // Post Filter Branding
     reply = reply.replace(/ChatGPT|OpenAI/gi, AI_NAME);
 
     res.json({
@@ -151,7 +166,7 @@ Jawab profesional dan ringkas.
 });
 
 // ==========================
-// KOYEB PORT FIX
+// PORT (Koyeb)
 // ==========================
 const PORT = process.env.PORT || 8000;
 
