@@ -17,15 +17,12 @@ app.use((req, res, next) => {
 const NEOXR_KEY = process.env.NEOXR_KEY;
 const SESSION = "1727468410446638";
 
-const AI_NAME = "Planova AI";
-const DEVELOPER = "Planova";
-
 // ==========================
 // ROOT
 // ==========================
 app.get("/", (req, res) => {
   res.json({
-    engine: "Planova Core Engine",
+    engine: "AI Service",
     status: "running"
   });
 });
@@ -35,7 +32,7 @@ app.get("/", (req, res) => {
 // ==========================
 app.get("/checkip", async (req, res) => {
   try {
-    const response = await fetch("https://api.ipify.org?format=json");
+    const response = await fetch("https://api64.ipify.org?format=json");
     const data = await response.json();
     res.json({ server_ip: data.ip });
   } catch (err) {
@@ -48,7 +45,7 @@ app.get("/checkip", async (req, res) => {
 // ==========================
 app.get("/realip", async (req, res) => {
   try {
-    const response = await fetch("https://api.ipify.org?format=json");
+    const response = await fetch("https://api64.ipify.org?format=json");
     const data = await response.json();
     res.json({ outbound_ip: data.ip });
   } catch (err) {
@@ -57,12 +54,12 @@ app.get("/realip", async (req, res) => {
 });
 
 // ==========================
-// DEBUG NEOXR (PENTING)
+// DEBUG NEOXR
 // ==========================
 app.get("/debug-neoxr", async (req, res) => {
   try {
     const response = await fetch(
-      `https://api.neoxr.eu/api/gpt4-session?q=test&session=${SESSION}&apikey=${NEOXR_KEY}`
+      `https://api.neoxr.eu/api/copilot?q=test&apikey=${NEOXR_KEY}`
     );
 
     const text = await response.text();
@@ -71,9 +68,7 @@ app.get("/debug-neoxr", async (req, res) => {
     console.log(text);
     console.log("==========================");
 
-    res.json({
-      raw_response: text
-    });
+    res.json({ raw_response: text });
 
   } catch (err) {
     res.json({ error: err.message });
@@ -81,106 +76,90 @@ app.get("/debug-neoxr", async (req, res) => {
 });
 
 // ==========================
-// NORMALIZE
+// CHAT - COPILOT
 // ==========================
-function normalize(text) {
-  let clean = text.toLowerCase();
-  clean = clean.replace(/[^a-z0-9 ]/g, "");
-  clean = clean
-    .replace(/opnai|opena i|open ai/g, "openai")
-    .replace(/chat gpt|chagpt/g, "chatgpt");
-  return clean;
-}
-
-// ==========================
-// IDENTITY LOCK
-// ==========================
-function identityCheck(text) {
-  const clean = normalize(text);
-
-  if (/siapa kamu|kamu siapa|nama kamu/.test(clean)) {
-    return `Saya adalah ${AI_NAME}.`;
-  }
-
-  if (/developer kamu|siapa developer kamu|siapa pembuat kamu/.test(clean)) {
-    return `Developer saya adalah ${DEVELOPER}.`;
-  }
-
-  return null;
-}
-
-// ==========================
-// API
-// ==========================
-app.post("/api", async (req, res) => {
+app.post("/api/chat", async (req, res) => {
   const message = req.body.message;
 
   if (!message) {
-    return res.json({ status: false, msg: "Message kosong" });
-  }
-
-  const identity = identityCheck(message);
-  if (identity) {
     return res.json({
-      status: true,
-      engine: "Planova Core Engine",
-      result: identity
+      status: false,
+      msg: "Message kosong"
     });
   }
 
-  const systemPrompt = `
-Kamu adalah ${AI_NAME}.
-Jangan pernah menyebut ChatGPT atau OpenAI.
-Jika ditanya identitas, jawab bahwa kamu adalah ${AI_NAME}.
-`;
-
   try {
-
-    // Log outbound IP sebelum call NeoXR
-    const ipRes = await fetch("https://api.ipify.org?format=json");
-    const ipData = await ipRes.json();
-    console.log("Outbound IP before NeoXR call:", ipData.ip);
-
     const response = await fetch(
-      `https://api.neoxr.eu/api/gpt4-session?q=${encodeURIComponent(
-        systemPrompt + "\nUser: " + message
-      )}&session=${SESSION}&apikey=${NEOXR_KEY}`
+      `https://api.neoxr.eu/api/copilot?q=${encodeURIComponent(message)}&apikey=${NEOXR_KEY}`
     );
 
-    const rawText = await response.text();
+    const data = await response.json();
 
-    console.log("=== NeoXR Response ===");
-    console.log(rawText);
-    console.log("======================");
-
-    let data;
-    try {
-      data = JSON.parse(rawText);
-    } catch {
-      return res.json({
-        status: false,
-        msg: "NeoXR response bukan JSON",
-        raw: rawText
-      });
+    if (!data.status) {
+      return res.json(data);
     }
 
-    let reply =
-      data?.data?.message ||
+    const reply =
+      data?.data ||
       data?.result ||
       data?.msg ||
-      rawText;
-
-    reply = reply.replace(/chatgpt|openai|gpt-?\d*/gi, AI_NAME);
+      "Tidak ada jawaban.";
 
     res.json({
       status: true,
-      engine: "Planova Core Engine",
       result: reply
     });
 
   } catch (err) {
-    console.error("ERROR:", err);
-    res.json({ status: false, msg: "Server error" });
+    console.error("Chat Error:", err);
+    res.json({
+      status: false,
+      msg: "Server error"
+    });
+  }
+});
+
+// ==========================
+// IMAGE GENERATOR
+// ==========================
+app.post("/api/image", async (req, res) => {
+  const prompt = req.body.prompt;
+
+  if (!prompt) {
+    return res.json({
+      status: false,
+      msg: "Prompt kosong"
+    });
+  }
+
+  try {
+    const response = await fetch(
+      `https://api.neoxr.eu/api/bardimg?q=${encodeURIComponent(prompt)}&apikey=${NEOXR_KEY}`
+    );
+
+    const data = await response.json();
+
+    if (!data.status) {
+      return res.json(data);
+    }
+
+    const imageUrl =
+      data?.data ||
+      data?.result ||
+      data?.url ||
+      null;
+
+    res.json({
+      status: true,
+      image: imageUrl
+    });
+
+  } catch (err) {
+    console.error("Image Error:", err);
+    res.json({
+      status: false,
+      msg: "Gagal generate image"
+    });
   }
 });
 
@@ -190,5 +169,5 @@ Jika ditanya identitas, jawab bahwa kamu adalah ${AI_NAME}.
 const PORT = process.env.PORT || 8000;
 
 app.listen(PORT, () => {
-  console.log(`🔥 Planova Core Engine running on port ${PORT}`);
+  console.log(`🔥 AI Service running on port ${PORT}`);
 });
