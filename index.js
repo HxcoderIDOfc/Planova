@@ -13,85 +13,76 @@ app.use((req, res, next) => {
   next();
 });
 
-// ===== CONFIG =====
+// ==========================
+// CONFIG
+// ==========================
 const NEOXR_KEY = process.env.NEOXR_KEY;
 const SESSION = "1727468410446638";
+const PHP_CACHE_API = "https://shehost.my.id/api.php"; // GANTI
 
 // ==========================
-// CACHE
+// RAM CACHE + RATE LIMIT
 // ==========================
 const searchCache = new Map();
+const rateLimitMap = new Map();
+const CACHE_EXPIRE = 1000 * 60 * 60 * 24; // 24 JAM
+const RATE_LIMIT = 20; // max 20 request per menit
+
+// ==========================
+// AUTO CLEANUP RAM CACHE
+// ==========================
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, value] of searchCache.entries()) {
+    if (now - value.timestamp > CACHE_EXPIRE) {
+      searchCache.delete(key);
+    }
+  }
+}, 1000 * 60 * 30); // tiap 30 menit
 
 // ==========================
 // ROOT
 // ==========================
 app.get("/", (req, res) => {
   res.json({
-    engine: "AI Mood Smart Realtime",
-    debug: ["debug-chat","debug-image","debug-search"],
+    engine: "AI Mood Smart Pro Max",
+    features: [
+      "mood-system",
+      "smart-search",
+      "mysql-global-cache",
+      "cache-expire",
+      "rate-limit",
+      "anti-duplicate",
+      "training-log",
+      "image-generator"
+    ],
     status: "running"
   });
 });
 
 // ==========================
-// DEBUG CHAT RAW
+// RATE LIMIT SYSTEM
 // ==========================
-app.get("/debug-chat", async (req, res) => {
-  try {
-    const response = await fetch(
-      `https://api.neoxr.eu/api/gpt4-session?q=test&session=${SESSION}&apikey=${NEOXR_KEY}`
-    );
+function checkRateLimit(ip) {
+  const now = Date.now();
+  const windowMs = 60000;
 
-    const raw = await response.text();
-    console.log("=== DEBUG CHAT RAW ===");
-    console.log(raw);
-
-    res.json({ raw_response: raw });
-
-  } catch (err) {
-    res.json({ error: err.message });
+  if (!rateLimitMap.has(ip)) {
+    rateLimitMap.set(ip, []);
   }
-});
 
-// ==========================
-// DEBUG IMAGE RAW
-// ==========================
-app.get("/debug-image", async (req, res) => {
-  try {
-    const response = await fetch(
-      `https://api.neoxr.eu/api/bardimg?q=test&apikey=${NEOXR_KEY}`
-    );
+  const timestamps = rateLimitMap.get(ip).filter(
+    t => now - t < windowMs
+  );
 
-    const raw = await response.text();
-    console.log("=== DEBUG IMAGE RAW ===");
-    console.log(raw);
-
-    res.json({ raw_response: raw });
-
-  } catch (err) {
-    res.json({ error: err.message });
+  if (timestamps.length >= RATE_LIMIT) {
+    return false;
   }
-});
 
-// ==========================
-// DEBUG SEARCH RAW
-// ==========================
-app.get("/debug-search", async (req, res) => {
-  try {
-    const response = await fetch(
-      `https://api.neoxr.eu/api/google?q=test&apikey=${NEOXR_KEY}`
-    );
-
-    const raw = await response.text();
-    console.log("=== DEBUG SEARCH RAW ===");
-    console.log(raw);
-
-    res.json({ raw_response: raw });
-
-  } catch (err) {
-    res.json({ error: err.message });
-  }
-});
+  timestamps.push(now);
+  rateLimitMap.set(ip, timestamps);
+  return true;
+}
 
 // ==========================
 // SEARCH FUNCTION
@@ -99,7 +90,10 @@ app.get("/debug-search", async (req, res) => {
 async function searchOnline(query) {
 
   if (searchCache.has(query)) {
-    return searchCache.get(query);
+    const cached = searchCache.get(query);
+    if (Date.now() - cached.timestamp < CACHE_EXPIRE) {
+      return cached.data;
+    }
   }
 
   const response = await fetch(
@@ -109,15 +103,17 @@ async function searchOnline(query) {
   const data = await response.json();
   if (!data.status) return null;
 
-  const results = data.data?.slice(0,3) || [];
+  const results = data.data?.slice(0, 3) || [];
 
-  const formatted = results.map(r => ({
-    title: r.title,
-    snippet: r.snippet,
-    link: r.link
-  }));
+  const formatted = results.map(r =>
+    `${r.title}\n${r.snippet}`
+  ).join("\n\n");
 
-  searchCache.set(query, formatted);
+  searchCache.set(query, {
+    data: formatted,
+    timestamp: Date.now()
+  });
+
   return formatted;
 }
 
@@ -127,60 +123,53 @@ async function searchOnline(query) {
 function detectMood(text){
   const lower = text.toLowerCase();
 
-  if (
-    lower.includes("hukum") ||
-    lower.includes("analisis") ||
-    lower.includes("ilmiah") ||
-    lower.includes("skripsi")
-  ) return "serius";
+  if (lower.match(/hukum|analisis|ilmiah|skripsi|penelitian/))
+    return "serius";
 
-  if (
-    lower.includes("lucu") ||
-    lower.includes("jokes") ||
-    lower.includes("gombal") ||
-    lower.includes("ngakak")
-  ) return "fun";
+  if (lower.match(/lucu|jokes|gombal|ngakak|candaan/))
+    return "fun";
 
   return "santai";
 }
 
 // ==========================
-// MOOD PROMPT
+// PROMPT BUILDER
 // ==========================
 function buildSystemPrompt(mood){
 
   if(mood === "serius"){
-    return `
-Kamu adalah AI profesional dan serius.
-Jawaban formal, jelas, dan sistematis.
-Gunakan informasi pencarian jika ada.
-Jangan bilang kamu tidak bisa akses internet.
-`;
+    return `Jawab secara profesional dan sistematis.`;
   }
 
   if(mood === "fun"){
-    return `
-Kamu adalah AI santai dan fun.
-Boleh bercanda ringan dan gaya ngobrol.
-Tetap informatif.
-Gunakan informasi pencarian jika ada.
-Jangan bilang kamu tidak bisa akses internet.
-`;
+    return `Jawab santai dan boleh sedikit bercanda.`;
   }
 
-  return `
-Kamu adalah AI pintar dan santai.
-Jawaban natural seperti teman ngobrol.
-Boleh sedikit humor ringan jika cocok.
-Gunakan informasi pencarian jika ada.
-Jangan bilang kamu tidak bisa akses internet.
-`;
+  return `Jawab natural seperti teman ngobrol.`;
+}
+
+// ==========================
+// SMART SEARCH DETECTOR
+// ==========================
+function shouldSearch(message){
+  return message.toLowerCase().match(
+    /siapa|berapa|kapan|presiden|harga|sekarang|update|terbaru/
+  );
 }
 
 // ==========================
 // CHAT API
 // ==========================
 app.post("/api/chat", async (req, res) => {
+
+  const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+
+  if (!checkRateLimit(ip)) {
+    return res.json({
+      status:false,
+      msg:"Terlalu banyak request, tunggu sebentar..."
+    });
+  }
 
   const message = req.body.message;
   if (!message) {
@@ -189,94 +178,110 @@ app.post("/api/chat", async (req, res) => {
 
   try {
 
+    // ==========================
+    // 1️⃣ MYSQL CACHE CHECK
+    // ==========================
+    try {
+      const cacheCheck = await fetch(
+        `${PHP_CACHE_API}?question=${encodeURIComponent(message)}`
+      );
+
+      const cacheData = await cacheCheck.json();
+
+      if (cacheData.cached) {
+
+        // update counter
+        await fetch(`${PHP_CACHE_API}?increment=true`, {
+          method:"POST",
+          headers:{ "Content-Type":"application/json" },
+          body: JSON.stringify({ question: message })
+        });
+
+        return res.json({
+          status:true,
+          from_mysql_cache:true,
+          result: cacheData.answer
+        });
+      }
+
+    } catch(e) {
+      console.log("MySQL skip...");
+    }
+
     const mood = detectMood(message);
     const systemPrompt = buildSystemPrompt(mood);
 
-    // FIRST CALL
-    const firstResponse = await fetch(
-      `https://api.neoxr.eu/api/gpt4-session?q=${encodeURIComponent(systemPrompt + "\nUser: " + message)}&session=${SESSION}&apikey=${NEOXR_KEY}`
-    );
+    let searchSnippet = "";
 
-    const firstData = await firstResponse.json();
-
-    let reply =
-      firstData?.data?.message ||
-      firstData?.result ||
-      firstData?.msg ||
-      "";
-
-    const lowerReply = reply.toLowerCase();
-    const lowerQuestion = message.toLowerCase();
-
-    const needSearch =
-      lowerQuestion.includes("sekarang") ||
-      lowerQuestion.includes("hari ini") ||
-      lowerQuestion.includes("2026") ||
-      lowerQuestion.includes("terbaru") ||
-      lowerReply.includes("tidak memiliki informasi terbaru");
-
-    if (!needSearch) {
-      return res.json({
-        status:true,
-        mood,
-        search_used:false,
-        result: reply
-      });
+    if (shouldSearch(message)) {
+      const result = await searchOnline(message);
+      if (result) {
+        searchSnippet = `Informasi terbaru:\n${result}`;
+      }
     }
 
-    // SEARCH
-    const searchResults = await searchOnline(message);
-
-    if (!searchResults) {
-      return res.json({
-        status:true,
-        mood,
-        search_used:false,
-        result: reply
-      });
-    }
-
-    const snippets = searchResults
-      .map(r => `${r.title}\n${r.snippet}`)
-      .join("\n\n");
+    const now = new Date();
+    const realtimeInfo = `
+Tanggal: ${now.toLocaleDateString("id-ID")}
+Jam: ${now.toLocaleTimeString("id-ID")}
+`;
 
     const finalPrompt = `
 ${systemPrompt}
 
-Gunakan informasi berikut untuk menjawab:
+${realtimeInfo}
 
-${snippets}
+${searchSnippet}
 
 Pertanyaan:
 ${message}
 `;
 
-    const finalResponse = await fetch(
+    const response = await fetch(
       `https://api.neoxr.eu/api/gpt4-session?q=${encodeURIComponent(finalPrompt)}&session=${SESSION}&apikey=${NEOXR_KEY}`
     );
 
-    const finalData = await finalResponse.json();
+    const data = await response.json();
 
-    let finalReply =
-      finalData?.data?.message ||
-      finalData?.result ||
-      finalData?.msg ||
-      reply;
+    let reply =
+      data?.data?.message ||
+      data?.result ||
+      data?.msg ||
+      "Tidak ada jawaban.";
 
-    finalReply = finalReply.replace(/tidak bisa mengakses internet/gi, "");
+    reply = reply
+      .replace(/tidak bisa mengakses internet/gi,"")
+      .replace(/tidak memiliki informasi terbaru/gi,"")
+      .trim();
+
+    // ==========================
+    // 2️⃣ SAVE MYSQL + SCORE
+    // ==========================
+    try {
+      await fetch(`${PHP_CACHE_API}?cache=true`, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({
+          question: message,
+          answer: reply
+        })
+      });
+    } catch(e){
+      console.log("Save cache gagal");
+    }
 
     res.json({
       status:true,
       mood,
-      search_used:true,
-      sources: searchResults,
-      result: finalReply
+      search_used: !!searchSnippet,
+      result: reply
     });
 
   } catch (err) {
     console.error(err);
     res.json({ status:false, msg:"Server error" });
   }
+
 });
 
 // ==========================
@@ -318,5 +323,5 @@ app.post("/api/image", async (req, res) => {
 const PORT = process.env.PORT || 8000;
 
 app.listen(PORT, () => {
-  console.log(`🔥 AI Mood Smart running on port ${PORT}`);
+  console.log(`🔥 AI Pro Max Running on port ${PORT}`);
 });
