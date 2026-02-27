@@ -18,15 +18,15 @@ app.use((req, res, next) => {
 // ==========================
 const NEOXR_KEY = process.env.NEOXR_KEY;
 const SESSION = "1727468410446638";
-const PHP_CACHE_API = "https://shehost.my.id/api.php"; // GANTI
+const PHP_CACHE_API = "https://shehost.my.id/api.php";
 
 // ==========================
 // RAM CACHE + RATE LIMIT
 // ==========================
 const searchCache = new Map();
 const rateLimitMap = new Map();
-const CACHE_EXPIRE = 1000 * 60 * 60 * 24; // 24 JAM
-const RATE_LIMIT = 20; // max 20 request per menit
+const CACHE_EXPIRE = 1000 * 60 * 60 * 24;
+const RATE_LIMIT = 25;
 
 // ==========================
 // AUTO CLEANUP RAM CACHE
@@ -41,68 +41,37 @@ setInterval(() => {
 }, 1000 * 60 * 30);
 
 // ==========================
-// ROOT (DEBUG NETWORK MODE)
+// ROOT DEBUG
 // ==========================
 app.get("/", async (req, res) => {
-  try {
 
-    const ipv4Res = await fetch("https://api.ipify.org?format=json");
-    const ipv4Data = await ipv4Res.json();
+  const ipv4 = await fetch("https://api.ipify.org?format=json")
+    .then(r=>r.json()).catch(()=>null);
 
-    const ipv6Res = await fetch("https://api64.ipify.org?format=json");
-    const ipv6Data = await ipv6Res.json();
+  const ipv6 = await fetch("https://api64.ipify.org?format=json")
+    .then(r=>r.json()).catch(()=>null);
 
-    const clientIP =
-      req.headers["x-forwarded-for"] ||
-      req.socket.remoteAddress;
-
-    res.json({
-      engine: "AI Mood Smart Pro Max",
-      status: "running",
-      server_outbound_ipv4: ipv4Data.ip,
-      server_outbound_ipv6: ipv6Data.ip,
-      client_ip: clientIP,
-      features: [
-        "mood-system",
-        "smart-search",
-        "mysql-global-cache",
-        "cache-expire",
-        "rate-limit",
-        "anti-duplicate",
-        "training-log",
-        "image-generator",
-        "debug-network"
-      ],
-      timestamp: new Date().toISOString()
-    });
-
-  } catch (err) {
-    res.json({
-      engine: "AI Mood Smart Pro Max",
-      status: "running",
-      error: err.message
-    });
-  }
+  res.json({
+    engine: "Planova Intelligence Engine 3.0 Autonomous Mode",
+    status: "running",
+    outbound_ipv4: ipv4?.ip || null,
+    outbound_ipv6: ipv6?.ip || null,
+    timestamp: new Date().toISOString()
+  });
 });
 
 // ==========================
-// RATE LIMIT SYSTEM
+// RATE LIMIT
 // ==========================
 function checkRateLimit(ip) {
   const now = Date.now();
   const windowMs = 60000;
 
-  if (!rateLimitMap.has(ip)) {
-    rateLimitMap.set(ip, []);
-  }
+  if (!rateLimitMap.has(ip)) rateLimitMap.set(ip, []);
 
-  const timestamps = rateLimitMap.get(ip).filter(
-    t => now - t < windowMs
-  );
+  const timestamps = rateLimitMap.get(ip).filter(t => now - t < windowMs);
 
-  if (timestamps.length >= RATE_LIMIT) {
-    return false;
-  }
+  if (timestamps.length >= RATE_LIMIT) return false;
 
   timestamps.push(now);
   rateLimitMap.set(ip, timestamps);
@@ -110,14 +79,76 @@ function checkRateLimit(ip) {
 }
 
 // ==========================
+// MOOD SYSTEM
+// ==========================
+function detectMood(text){
+  const t = text.toLowerCase();
+  if (t.match(/hukum|ilmiah|analisis|skripsi|penelitian/)) return "serius";
+  if (t.match(/lucu|gombal|jokes|ngakak/)) return "fun";
+  return "santai";
+}
+
+function buildSystemPrompt(mood){
+  if(mood === "serius") return "Jawab profesional dan sistematis.";
+  if(mood === "fun") return "Jawab santai dan boleh sedikit bercanda.";
+  return "Jawab natural seperti teman ngobrol.";
+}
+
+// ==========================
+// RANKING SYSTEM
+// ==========================
+function rankResults(results){
+
+  const trusted = [
+    "kompas.com",
+    "detik.com",
+    "cnnindonesia.com",
+    "tempo.co",
+    "bbc.com",
+    "wikipedia.org"
+  ];
+
+  return results.map(r => {
+
+    let score = 0;
+
+    trusted.forEach(d=>{
+      if(r.link.includes(d)) score += 6;
+    });
+
+    if(r.snippet.length > 120) score += 2;
+    if(r.title.length > 20) score += 1;
+
+    return { ...r, score };
+
+  }).sort((a,b)=>b.score - a.score)
+    .slice(0,5);
+}
+
+// ==========================
+// CONFIDENCE SYSTEM
+// ==========================
+function calculateConfidence(ranked){
+  if (!ranked || ranked.length === 0) return 0.4;
+
+  const avg = ranked.reduce((a,b)=>a+b.score,0)/ranked.length;
+
+  let conf = 0.55 + (avg * 0.04);
+
+  if (conf > 0.97) conf = 0.97;
+
+  return Number(conf.toFixed(2));
+}
+
+// ==========================
 // SEARCH FUNCTION
 // ==========================
-async function searchOnline(query) {
+async function searchOnline(query){
 
-  if (searchCache.has(query)) {
+  if (searchCache.has(query)){
     const cached = searchCache.get(query);
-    if (Date.now() - cached.timestamp < CACHE_EXPIRE) {
-      return cached.data;
+    if(Date.now() - cached.timestamp < CACHE_EXPIRE){
+      return cached.ranked;
     }
   }
 
@@ -126,131 +157,99 @@ async function searchOnline(query) {
   );
 
   const data = await response.json();
-  if (!data.status) return null;
+  if(!data.status || !data.data) return [];
 
-  const results = data.data?.slice(0, 3) || [];
+  const ranked = rankResults(data.data);
 
-  const formatted = results.map(r =>
-    `${r.title}\n${r.snippet}`
-  ).join("\n\n");
-
-  searchCache.set(query, {
-    data: formatted,
+  searchCache.set(query,{
+    ranked,
     timestamp: Date.now()
   });
 
-  return formatted;
+  return ranked;
 }
 
 // ==========================
-// MOOD DETECTOR
+// AUTONOMOUS MULTI-QUERY
 // ==========================
-function detectMood(text){
-  const lower = text.toLowerCase();
+async function autonomousSearch(message){
 
-  if (lower.match(/hukum|analisis|ilmiah|skripsi|penelitian/))
-    return "serius";
+  // Query utama
+  const primary = await searchOnline(message);
 
-  if (lower.match(/lucu|jokes|gombal|ngakak|candaan/))
-    return "fun";
+  // Query refine (AI-style)
+  const refinedQuery = message + " terbaru 2026 update resmi";
+  const refined = await searchOnline(refinedQuery);
 
-  return "santai";
-}
+  // Gabungkan & hilangkan duplikat
+  const combined = [...primary, ...refined];
 
-// ==========================
-// PROMPT BUILDER
-// ==========================
-function buildSystemPrompt(mood){
+  const unique = [];
+  const seen = new Set();
 
-  if(mood === "serius"){
-    return `Jawab secara profesional dan sistematis.`;
+  for(const r of combined){
+    if(!seen.has(r.link)){
+      seen.add(r.link);
+      unique.push(r);
+    }
   }
 
-  if(mood === "fun"){
-    return `Jawab santai dan boleh sedikit bercanda.`;
-  }
-
-  return `Jawab natural seperti teman ngobrol.`;
+  return unique.slice(0,5);
 }
 
 // ==========================
-// SMART SEARCH DETECTOR
+// CHAT API (AUTONOMOUS)
 // ==========================
-function shouldSearch(message){
-  return message.toLowerCase().match(
-    /siapa|berapa|kapan|presiden|harga|sekarang|update|terbaru/
-  );
-}
-
-// ==========================
-// CHAT API
-// ==========================
-app.post("/api/chat", async (req, res) => {
+app.post("/api/chat", async (req,res)=>{
 
   const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
-
-  if (!checkRateLimit(ip)) {
-    return res.json({
-      status:false,
-      msg:"Terlalu banyak request, tunggu sebentar..."
-    });
+  if(!checkRateLimit(ip)){
+    return res.json({ status:false, msg:"Rate limit aktif..." });
   }
 
   const message = req.body.message;
-  if (!message) {
-    return res.json({ status:false, msg:"Message kosong" });
-  }
+  if(!message) return res.json({ status:false, msg:"Message kosong" });
 
-  try {
+  try{
 
-    // MYSQL CACHE CHECK
-    try {
-      const cacheCheck = await fetch(
-        `${PHP_CACHE_API}?question=${encodeURIComponent(message)}`
-      );
-
+    // MYSQL CACHE
+    try{
+      const cacheCheck = await fetch(`${PHP_CACHE_API}?question=${encodeURIComponent(message)}`);
       const cacheData = await cacheCheck.json();
 
-      if (cacheData.cached) {
-        await fetch(`${PHP_CACHE_API}?increment=true`, {
-          method:"POST",
-          headers:{ "Content-Type":"application/json" },
-          body: JSON.stringify({ question: message })
-        });
-
+      if(cacheData.cached){
         return res.json({
           status:true,
           from_mysql_cache:true,
+          confidence:0.99,
+          sources:[],
           result: cacheData.answer
         });
       }
-
-    } catch(e) {
-      console.log("MySQL skip...");
-    }
+    }catch{}
 
     const mood = detectMood(message);
     const systemPrompt = buildSystemPrompt(mood);
 
-    let searchSnippet = "";
+    // 🔥 AUTONOMOUS SEARCH
+    const rankedResults = await autonomousSearch(message);
 
-    if (shouldSearch(message)) {
-      const result = await searchOnline(message);
-      if (result) {
-        searchSnippet = `Informasi terbaru:\n${result}`;
-      }
-    }
+    const confidence = calculateConfidence(rankedResults);
+
+    const searchSnippet = rankedResults.map(r =>
+      `(${r.score}⭐)\n${r.title}\n${r.snippet}\nSumber: ${r.link}`
+    ).join("\n\n");
 
     const now = new Date();
-    const realtimeInfo = `
-Tanggal: ${now.toLocaleDateString("id-ID")}
-Jam: ${now.toLocaleTimeString("id-ID")}
-`;
 
     const finalPrompt = `
 ${systemPrompt}
 
-${realtimeInfo}
+Tanggal: ${now.toLocaleDateString("id-ID")}
+Jam: ${now.toLocaleTimeString("id-ID")}
+
+Gunakan referensi berikut untuk menjawab secara akurat.
+Jika tidak cukup bukti, katakan informasi belum cukup.
 
 ${searchSnippet}
 
@@ -275,8 +274,9 @@ ${message}
       .replace(/tidak memiliki informasi terbaru/gi,"")
       .trim();
 
-    try {
-      await fetch(`${PHP_CACHE_API}?cache=true`, {
+    // SAVE MYSQL
+    try{
+      await fetch(`${PHP_CACHE_API}?cache=true`,{
         method:"POST",
         headers:{ "Content-Type":"application/json" },
         body: JSON.stringify({
@@ -284,19 +284,18 @@ ${message}
           answer: reply
         })
       });
-    } catch(e){
-      console.log("Save cache gagal");
-    }
+    }catch{}
 
     res.json({
       status:true,
       mood,
-      search_used: !!searchSnippet,
+      confidence,
+      autonomous:true,
+      sources: rankedResults,
       result: reply
     });
 
-  } catch (err) {
-    console.error(err);
+  }catch{
     res.json({ status:false, msg:"Server error" });
   }
 
@@ -305,14 +304,12 @@ ${message}
 // ==========================
 // IMAGE API
 // ==========================
-app.post("/api/image", async (req, res) => {
+app.post("/api/image", async (req,res)=>{
 
   const prompt = req.body.prompt;
-  if (!prompt) {
-    return res.json({ status:false, msg:"Prompt kosong" });
-  }
+  if(!prompt) return res.json({ status:false, msg:"Prompt kosong" });
 
-  try {
+  try{
     const response = await fetch(
       `https://api.neoxr.eu/api/bardimg?q=${encodeURIComponent(prompt)}&apikey=${NEOXR_KEY}`
     );
@@ -325,21 +322,35 @@ app.post("/api/image", async (req, res) => {
       data?.url ||
       null;
 
-    res.json({
-      status:true,
-      image:imageUrl
-    });
+    res.json({ status:true, image:imageUrl });
 
-  } catch (err) {
+  }catch{
     res.json({ status:false, msg:"Gagal generate image" });
   }
 });
 
 // ==========================
-// PORT
+// UNIVERSAL /api
+// ==========================
+app.post("/api", async (req,res)=>{
+
+  const type = req.body.type || "chat";
+
+  if(type === "chat"){
+    req.url = "/api/chat";
+    return app._router.handle(req,res,()=>{});
+  }
+
+  if(type === "image"){
+    req.url = "/api/image";
+    return app._router.handle(req,res,()=>{});
+  }
+
+  res.json({ status:false, msg:"Type tidak dikenali" });
+});
+
 // ==========================
 const PORT = process.env.PORT || 8000;
-
-app.listen(PORT, () => {
-  console.log(`🔥 AI Pro Max Running on port ${PORT}`);
+app.listen(PORT, ()=>{
+  console.log("🚀 Planova Intelligence Engine 3.0 Autonomous Mode running on port " + PORT);
 });
