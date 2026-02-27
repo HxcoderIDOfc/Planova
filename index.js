@@ -40,23 +40,22 @@ function checkRateLimit(ip) {
 }
 
 // ==========================
-// SELF REFERENCE DETECTOR
+// SELF REFERENCE DETECTOR (SMART)
 // ==========================
 function isSelfReference(text){
   const lower = text.toLowerCase();
 
-  const selfWords = [
-    "kamu",
-    "anda",
-    "dirimu",
-    "ai ini",
+  const exactPatterns = [
     "siapa kamu",
     "nama kamu",
+    "kamu siapa",
     "pembuat kamu",
-    "developer kamu"
+    "developer kamu",
+    "siapa pembuatmu",
+    "siapa developermu"
   ];
 
-  return selfWords.some(word => lower.includes(word));
+  return exactPatterns.some(p => lower.includes(p));
 }
 
 // ==========================
@@ -78,7 +77,7 @@ function sanitizeMessage(message){
 function detectMode(text){
   const t = text.toLowerCase();
 
-  if (t.match(/ngakak|wkwk|gila|absurd|receh|lawak|super lucu/))
+  if (t.match(/ngakak|wkwk|absurd|receh|lawak|super lucu/))
     return "super_fun";
 
   if (t.match(/lucu|bercanda|jokes|gombal|candaan/))
@@ -98,14 +97,14 @@ function buildModePrompt(mode){
   if(mode === "super_fun"){
     return `
 Jawab dengan gaya sangat santai dan super bercanda.
-Boleh sedikit lebay tapi tetap informatif.
+Sedikit lebay boleh, tapi tetap informatif.
 Gunakan humor kreatif.
 `;
   }
 
   if(mode === "fun"){
     return `
-Jawab santai dengan sedikit humor ringan.
+Jawab santai dengan humor ringan.
 Tetap jelas dan tidak berlebihan.
 `;
   }
@@ -113,7 +112,7 @@ Tetap jelas dan tidak berlebihan.
   if(mode === "professional"){
     return `
 Jawab secara profesional, sistematis, formal, dan berbobot.
-Gunakan struktur yang rapi.
+Gunakan struktur yang rapi dan jelas.
 `;
   }
 
@@ -172,7 +171,7 @@ app.get("/", async (req, res) => {
     .then(r=>r.json()).catch(()=>null);
 
   res.json({
-    engine: "Planova Identity Lock 3.0 + Personality Mode",
+    engine: "Planova Identity Lock 3.1 Stable",
     status: "running",
     outbound_ipv4: ipv4?.ip || null,
     outbound_ipv6: ipv6?.ip || null,
@@ -181,7 +180,7 @@ app.get("/", async (req, res) => {
 });
 
 // ==========================
-// UNIVERSAL API
+// UNIVERSAL CHAT API
 // ==========================
 app.post("/api", async (req,res)=>{
 
@@ -196,26 +195,37 @@ app.post("/api", async (req,res)=>{
 
   try{
 
+    if(!NEOXR_KEY){
+      return res.json({ status:false, msg:"API Key belum diset di server." });
+    }
+
     const finalPrompt = buildPrompt(message);
 
     const response = await fetch(
       `https://api.neoxr.eu/api/meta?id=1&q=${encodeURIComponent(finalPrompt)}&apikey=${NEOXR_KEY}`
     );
 
-    const raw = await response.text();
+    if(!response.ok){
+      return res.json({
+        status:false,
+        msg:`External API Error (${response.status})`
+      });
+    }
 
-    let data;
-    try{
-      data = JSON.parse(raw);
-    }catch{
-      data = null;
+    const data = await response.json().catch(()=>null);
+
+    if(!data){
+      return res.json({
+        status:false,
+        msg:"Invalid API response"
+      });
     }
 
     const reply =
+      data?.data?.message ||
       data?.data ||
       data?.result ||
       data?.msg ||
-      raw ||
       "Tidak ada jawaban.";
 
     res.json({
@@ -224,8 +234,11 @@ app.post("/api", async (req,res)=>{
       result: reply
     });
 
-  }catch{
-    res.json({ status:false, msg:"Server error" });
+  }catch(err){
+    res.json({ 
+      status:false, 
+      msg: err.message || "Server error"
+    });
   }
 
 });
@@ -233,5 +246,5 @@ app.post("/api", async (req,res)=>{
 // ==========================
 const PORT = process.env.PORT || 8000;
 app.listen(PORT, ()=>{
-  console.log("🚀 Planova Identity Lock 3.0 + Personality Mode running on port " + PORT);
+  console.log("🚀 Planova Identity Lock 3.1 Stable running on port " + PORT);
 });
