@@ -52,7 +52,7 @@ app.get("/", async (req, res) => {
     .then(r=>r.json()).catch(()=>null);
 
   res.json({
-    engine: "Planova Intelligence Engine 3.0 Autonomous Mode",
+    engine: "Planova Intelligence Engine 3.1 Ultra Stable",
     status: "running",
     outbound_ipv4: ipv4?.ip || null,
     outbound_ipv6: ipv6?.ip || null,
@@ -152,21 +152,25 @@ async function searchOnline(query){
     }
   }
 
-  const response = await fetch(
-    `https://api.neoxr.eu/api/google?q=${encodeURIComponent(query)}&apikey=${NEOXR_KEY}`
-  );
+  try{
+    const response = await fetch(
+      `https://api.neoxr.eu/api/google?q=${encodeURIComponent(query)}&apikey=${NEOXR_KEY}`
+    );
 
-  const data = await response.json();
-  if(!data.status || !data.data) return [];
+    const data = await response.json();
+    if(!data.status || !data.data) return [];
 
-  const ranked = rankResults(data.data);
+    const ranked = rankResults(data.data);
 
-  searchCache.set(query,{
-    ranked,
-    timestamp: Date.now()
-  });
+    searchCache.set(query,{
+      ranked,
+      timestamp: Date.now()
+    });
 
-  return ranked;
+    return ranked;
+  }catch{
+    return [];
+  }
 }
 
 // ==========================
@@ -174,16 +178,10 @@ async function searchOnline(query){
 // ==========================
 async function autonomousSearch(message){
 
-  // Query utama
   const primary = await searchOnline(message);
+  const refined = await searchOnline(message + " terbaru 2026 update resmi");
 
-  // Query refine (AI-style)
-  const refinedQuery = message + " terbaru 2026 update resmi";
-  const refined = await searchOnline(refinedQuery);
-
-  // Gabungkan & hilangkan duplikat
   const combined = [...primary, ...refined];
-
   const unique = [];
   const seen = new Set();
 
@@ -198,7 +196,7 @@ async function autonomousSearch(message){
 }
 
 // ==========================
-// CHAT API (AUTONOMOUS)
+// CHAT API (ULTRA STABLE)
 // ==========================
 app.post("/api/chat", async (req,res)=>{
 
@@ -231,9 +229,7 @@ app.post("/api/chat", async (req,res)=>{
     const mood = detectMood(message);
     const systemPrompt = buildSystemPrompt(mood);
 
-    // 🔥 AUTONOMOUS SEARCH
     const rankedResults = await autonomousSearch(message);
-
     const confidence = calculateConfidence(rankedResults);
 
     const searchSnippet = rankedResults.map(r =>
@@ -257,17 +253,45 @@ Pertanyaan:
 ${message}
 `;
 
-    const response = await fetch(
-      `https://api.neoxr.eu/api/gpt4-session?q=${encodeURIComponent(finalPrompt)}&session=${SESSION}&apikey=${NEOXR_KEY}`
-    );
+    let reply = null;
 
-    const data = await response.json();
+    try{
+      const response = await fetch(
+        `https://api.neoxr.eu/api/gpt4-session?q=${encodeURIComponent(finalPrompt)}&session=${SESSION}&apikey=${NEOXR_KEY}`
+      );
 
-    let reply =
-      data?.data?.message ||
-      data?.result ||
-      data?.msg ||
-      "Tidak ada jawaban.";
+      const raw = await response.text();
+
+      let data;
+      try{
+        data = JSON.parse(raw);
+      }catch{
+        data = null;
+      }
+
+      reply =
+        data?.data?.message ||
+        data?.data ||
+        data?.result ||
+        data?.msg ||
+        null;
+
+    }catch{
+      reply = null;
+    }
+
+    // 🔥 FAIL SAFE MODE
+    if(!reply || reply.length < 5){
+      if(rankedResults.length > 0){
+        reply =
+          "Berdasarkan sumber terpercaya:\n\n" +
+          rankedResults.map(r =>
+            `${r.title}\n${r.snippet}\nSumber: ${r.link}`
+          ).join("\n\n");
+      }else{
+        reply = "Informasi belum cukup ditemukan.";
+      }
+    }
 
     reply = reply
       .replace(/tidak bisa mengakses internet/gi,"")
@@ -291,6 +315,7 @@ ${message}
       mood,
       confidence,
       autonomous:true,
+      ultra_stable:true,
       sources: rankedResults,
       result: reply
     });
@@ -330,27 +355,7 @@ app.post("/api/image", async (req,res)=>{
 });
 
 // ==========================
-// UNIVERSAL /api
-// ==========================
-app.post("/api", async (req,res)=>{
-
-  const type = req.body.type || "chat";
-
-  if(type === "chat"){
-    req.url = "/api/chat";
-    return app._router.handle(req,res,()=>{});
-  }
-
-  if(type === "image"){
-    req.url = "/api/image";
-    return app._router.handle(req,res,()=>{});
-  }
-
-  res.json({ status:false, msg:"Type tidak dikenali" });
-});
-
-// ==========================
 const PORT = process.env.PORT || 8000;
 app.listen(PORT, ()=>{
-  console.log("🚀 Planova Intelligence Engine 3.0 Autonomous Mode running on port " + PORT);
+  console.log("🚀 Planova Intelligence Engine 3.1 Ultra Stable running on port " + PORT);
 });
