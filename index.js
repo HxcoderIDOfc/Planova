@@ -38,26 +38,51 @@ setInterval(() => {
       searchCache.delete(key);
     }
   }
-}, 1000 * 60 * 30); // tiap 30 menit
+}, 1000 * 60 * 30);
 
 // ==========================
-// ROOT
+// ROOT (DEBUG NETWORK MODE)
 // ==========================
-app.get("/", (req, res) => {
-  res.json({
-    engine: "AI Mood Smart Pro Max",
-    features: [
-      "mood-system",
-      "smart-search",
-      "mysql-global-cache",
-      "cache-expire",
-      "rate-limit",
-      "anti-duplicate",
-      "training-log",
-      "image-generator"
-    ],
-    status: "running"
-  });
+app.get("/", async (req, res) => {
+  try {
+
+    const ipv4Res = await fetch("https://api.ipify.org?format=json");
+    const ipv4Data = await ipv4Res.json();
+
+    const ipv6Res = await fetch("https://api64.ipify.org?format=json");
+    const ipv6Data = await ipv6Res.json();
+
+    const clientIP =
+      req.headers["x-forwarded-for"] ||
+      req.socket.remoteAddress;
+
+    res.json({
+      engine: "AI Mood Smart Pro Max",
+      status: "running",
+      server_outbound_ipv4: ipv4Data.ip,
+      server_outbound_ipv6: ipv6Data.ip,
+      client_ip: clientIP,
+      features: [
+        "mood-system",
+        "smart-search",
+        "mysql-global-cache",
+        "cache-expire",
+        "rate-limit",
+        "anti-duplicate",
+        "training-log",
+        "image-generator",
+        "debug-network"
+      ],
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (err) {
+    res.json({
+      engine: "AI Mood Smart Pro Max",
+      status: "running",
+      error: err.message
+    });
+  }
 });
 
 // ==========================
@@ -178,9 +203,7 @@ app.post("/api/chat", async (req, res) => {
 
   try {
 
-    // ==========================
-    // 1️⃣ MYSQL CACHE CHECK
-    // ==========================
+    // MYSQL CACHE CHECK
     try {
       const cacheCheck = await fetch(
         `${PHP_CACHE_API}?question=${encodeURIComponent(message)}`
@@ -189,8 +212,6 @@ app.post("/api/chat", async (req, res) => {
       const cacheData = await cacheCheck.json();
 
       if (cacheData.cached) {
-
-        // update counter
         await fetch(`${PHP_CACHE_API}?increment=true`, {
           method:"POST",
           headers:{ "Content-Type":"application/json" },
@@ -254,9 +275,6 @@ ${message}
       .replace(/tidak memiliki informasi terbaru/gi,"")
       .trim();
 
-    // ==========================
-    // 2️⃣ SAVE MYSQL + SCORE
-    // ==========================
     try {
       await fetch(`${PHP_CACHE_API}?cache=true`, {
         method:"POST",
